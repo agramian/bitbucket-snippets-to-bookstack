@@ -5,7 +5,7 @@ A Python script to migrate Bitbucket snippets to Bookstack books and pages.
 ## Features
 - Automatically creates books named using the snippet titles and pages for each file of a snippet named using the filenames.
 - Supports skipping books and pages that already exist via arguments.
-- Creates revisions for previous snippet changes.
+- Supports creating revisions for previous snippet changes.
 - Snippet content will be placed into Bookstack pages as Markdown. 
 
 ## Limitations
@@ -44,6 +44,7 @@ A Python script to migrate Bitbucket snippets to Bookstack books and pages.
          --bs-token-id "your_bookstack_token_id" \
          --bs-token-secret "your_bookstack_token_secret" \
          --bb-workspace "your_bitbucket_workspace_id" \
+         # Optional: Add --create-revisions if you want to create page revisions for each snippet change
          # Optional: Add --skip-existing-books if you don't want to update books that already exist
          # Optional: Add --skip-existing-pages if you don't want to update pages that already exist
          # Optional: Add --test-snippet-id to test the script with a single snippet

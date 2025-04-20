@@ -1,11 +1,10 @@
-# python
-import requests
+import argparse
 import base64
 import json
-import argparse
 import sys
-import time
 from urllib.parse import urljoin, quote
+
+import requests
 
 # --- Configuration ---
 BITBUCKET_API_BASE = "https://api.bitbucket.org/2.0/"
@@ -113,6 +112,24 @@ def get_snippet_commits(workspace, snippet_id, headers):
     print(f"Found {len(commits)} commits for snippet {snippet_id}.")
     # Reverse to get oldest first for sequential application
     return list(reversed(commits))
+
+def get_latest_snippet_commit(workspace, snippet_id, headers):
+    """Gets the commit details for the latest version of a specific snippet."""
+    # Always expect JSON for commit metadata
+    url = urljoin(BITBUCKET_API_BASE, f"snippets/{quote(workspace)}/{quote(snippet_id)}/commits/HEAD")
+    print(f"Fetching commit HEAD for snippet {snippet_id}...")
+    data = make_request("GET", url, headers=headers, expect_json=True)
+    if data is None: # Handle make_request returning None on error
+        print(f"Error: Failed to fetch or parse data from {url}", file=sys.stderr)
+        return None # Propagate error
+
+    if not isinstance(data, dict):
+        print(f"Warning: Unexpected data structure in response from {url}. Response: {data}", file=sys.stderr)
+
+    if data is None: # Handle error from get_paginated_results
+        return None
+    print(f"Found HEAD commit for snippet {snippet_id}.")
+    return [data]
 
 def get_snippet_revision_content(workspace, snippet_id, commit_hash, file_path, headers):
     """Gets the raw content of a specific file within a snippet revision."""
@@ -242,7 +259,7 @@ def main():
     parser.add_argument("--bs-url", required=True, help="Base URL of your Bookstack instance (e.g., https://bookstack.example.com).")
     parser.add_argument("--bs-token-id", required=True, help="Bookstack API Token ID.")
     parser.add_argument("--bs-token-secret", required=True, help="Bookstack API Token Secret.")
-    # No longer need --bs-book-id
+    parser.add_argument("--create-revisions", action="store_true", help="Create page revisions for each snippet change.")
     parser.add_argument("--skip-existing-books", action="store_true", help="Skip snippets entirely if a Book with the same title already exists.")
     parser.add_argument("--skip-existing-pages", action="store_true", help="Skip creating/updating pages if they already exist in the target book (use with caution, prevents history update).")
     parser.add_argument("--test-snippet-id", help="Only process the snippet with this specific ID for testing.")
@@ -324,16 +341,18 @@ def main():
             print(f"Info: Snippet {snippet_id} ('{snippet_title}') appears to have no files. Skipping.")
             continue
 
-        commits = get_snippet_commits(bitbucket_workspace, snippet_id, bb_headers)
-        if commits is None:
-            print(f"Error: Failed to fetch commits for snippet {snippet_id}. Skipping files within this snippet.", file=sys.stderr)
-            continue
-        if not commits:
-            print(f"Warning: No commit history found for snippet {snippet_id}. Pages will be created based on current content only.", file=sys.stderr)
-            # We can still proceed to create pages based on the *current* state if commits are empty
-            # Let's synthesize a 'current' state commit info for this case
-            commits = [{"hash": "HEAD", "date": snippet_details.get("updated_on", "N/A"), "message": "Current state", "author": {"raw": "N/A"}}]
-
+        if args.create_revisions:
+            commits = get_snippet_commits(bitbucket_workspace, snippet_id, bb_headers)
+            if commits is None:
+                print(f"Error: Failed to fetch commits for snippet {snippet_id}. Skipping files within this snippet.", file=sys.stderr)
+                continue
+            if not commits:
+                print(f"Warning: No commit history found for snippet {snippet_id}. Pages will be created based on current content only.", file=sys.stderr)
+                # We can still proceed to create pages based on the *current* state if commits are empty
+                # Let's synthesize a 'current' state commit info for this case
+                commits = [{"hash": "HEAD", "date": snippet_details.get("updated_on", "N/A"), "message": "Current state", "author": {"raw": "N/A"}}]
+        else:
+            commits = get_latest_snippet_commit(bitbucket_workspace, snippet_id, bb_headers)
 
         # --- Process Each File (-> Page) ---
         for filename in current_files.keys():
