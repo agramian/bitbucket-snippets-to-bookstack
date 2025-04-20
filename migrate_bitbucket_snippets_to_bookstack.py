@@ -356,8 +356,9 @@ def main():
 
         # --- Process Each File (-> Page) ---
         for filename in current_files.keys():
+            page_name = filename.removesuffix('.markdown')
             print(f"\n  -- Processing File (Page): '{filename}' --")
-            target_page = find_bookstack_page(book_id, filename, bs_headers)
+            target_page = find_bookstack_page(book_id, page_name, bs_headers)
             page_id = None
             page_created_in_this_run = False
 
@@ -400,7 +401,7 @@ def main():
                 # Now, either create or update the Bookstack page
                 if not page_id and not page_created_in_this_run:
                     # First successful content fetch for this file, and page doesn't exist yet. Create it.
-                    created_page = create_bookstack_page(book_id, filename, page_content, bs_headers, commit_info)
+                    created_page = create_bookstack_page(book_id, page_name, page_content, bs_headers, commit_info)
                     if created_page and 'id' in created_page:
                         page_id = created_page['id']
                         page_created_in_this_run = True # Mark as created

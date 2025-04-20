@@ -18,7 +18,7 @@ A Python script to migrate Bitbucket snippets to Bookstack books and pages.
   conversions are required. 
 
 ## Requirements
-- Python 3.7+.
+- Python 3.9+.
 
 ## Usage
 1. [Create a Bitbucket App password](https://support.atlassian.com/bitbucket-cloud/docs/create-an-app-password/).
