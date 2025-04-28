@@ -43,7 +43,7 @@ A Python script to migrate Bitbucket snippets to Bookstack books and pages.
          --bs-url "https://your-bookstack-domain.com" \
          --bs-token-id "your_bookstack_token_id" \
          --bs-token-secret "your_bookstack_token_secret" \
-         --bb-workspace "your_bitbucket_workspace_id" \
+         # Optional: Add --bb-workspace "bitbucket_workspace_id" to specify a Bitbucket workspace ID otherwise defaults to bb-user
          # Optional: Add --create-revisions if you want to create page revisions for each snippet change
          # Optional: Add --skip-existing-books if you don't want to update books that already exist
          # Optional: Add --skip-existing-pages if you don't want to update pages that already exist

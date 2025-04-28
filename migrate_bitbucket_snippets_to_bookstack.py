@@ -2,6 +2,7 @@ import argparse
 import base64
 import json
 import sys
+import time
 from urllib.parse import urljoin, quote
 
 import requests
@@ -9,48 +10,102 @@ import requests
 # --- Configuration ---
 BITBUCKET_API_BASE = "https://api.bitbucket.org/2.0/"
 BOOKSTACK_API_BASE = None # Provided via arguments
+DEFAULT_RETRY_COUNT = 3 # Number of retries
+DEFAULT_RETRY_DELAY = 2 # Delay between retries in seconds
 
 # --- Helper Functions ---
 
-def make_request(method, url, headers, **kwargs):
-    """Makes an HTTP request and handles basic errors."""
+def make_request(method, url, headers, max_retries=DEFAULT_RETRY_COUNT, retry_delay=DEFAULT_RETRY_DELAY, **kwargs):
+    """
+    Makes an HTTP request with retry logic for transient server errors (5xx)
+    and connection issues.
+    """
     # Add expect_json parameter to control decoding
     expect_json = kwargs.pop('expect_json', True)
     # Add caller_info parameter to control special handling
     caller_info = kwargs.pop('caller_info', '')
-    try:
-        response = requests.request(method, url, headers=headers, timeout=30, **kwargs)
-        # Allow 404 specifically for get_snippet_revision_content as it means file didn't exist
-        if response.status_code == 404 and "get_snippet_revision_content" in caller_info:
-            print(f"Info: Received 404 for {url}, likely file not present in this revision.")
-            return None # Indicate file not found for this revision
 
-        response.raise_for_status() # Raise HTTPError for other bad responses (4xx or 5xx)
+    last_exception = None # Keep track of the last exception for reporting
 
-        if response.status_code == 204:
-            return None # No content
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.request(method, url, headers=headers, timeout=30, **kwargs)
 
-        # Only decode JSON if expected
-        if expect_json and 'application/json' in response.headers.get('Content-Type', ''):
-            try:
-                return response.json()
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON response from {url}: {e}", file=sys.stderr)
-                print(f"Response text: {response.text}", file=sys.stderr)
-                return None # Indicate JSON decode failure
+            # --- Success or Non-Retryable Client Error Handling ---
+
+            # Special case: Allow 404 for get_snippet_revision_content
+            if response.status_code == 404 and "get_snippet_revision_content" in caller_info:
+                print(f"Info: Received 404 for {url} (Attempt {attempt + 1}/{max_retries + 1}), file likely not present in this revision.")
+                return None # Indicate file not found for this revision, not an error to retry
+
+            # Check for other client errors (4xx) - typically not retryable
+            if 400 <= response.status_code < 500:
+                print(f"Warning: Client Error {response.status_code} for {url} (Attempt {attempt + 1}/{max_retries + 1}). Not retrying.", file=sys.stderr)
+                try:
+                    print(f"Response body: {response.text}", file=sys.stderr)
+                except Exception:
+                    print("Could not decode error response body.", file=sys.stderr)
+                response.raise_for_status() # Let requests raise the exception for client errors after logging
+                return None # Should not be reached if raise_for_status works
+
+            # Check for successful status codes (including 204 No Content)
+            if response.ok: # Status code < 400
+                if response.status_code == 204:
+                    return None # No content, successful
+
+                # Handle successful response with content
+                if expect_json and 'application/json' in response.headers.get('Content-Type', ''):
+                    try:
+                        return response.json()
+                    except json.JSONDecodeError as e:
+                        # Treat JSON decode error on success as a failure, maybe retry? For now, fail.
+                        print(f"Error decoding JSON response from {url} on successful request: {e}", file=sys.stderr)
+                        print(f"Response text: {response.text}", file=sys.stderr)
+                        last_exception = e # Store exception
+                        # Decide if this specific error is retryable - often suggests malformed data, so maybe not.
+                        # If considered retryable, could add logic here to continue loop.
+                        break # Break and return None after loop
+                else:
+                    # Return raw content if not expecting JSON or content type mismatch
+                    return response.text # Successful, return content
+
+            # --- Retryable Server Error Handling (5xx) ---
+            if response.status_code >= 500:
+                print(f"Warning: Server Error {response.status_code} for {url} (Attempt {attempt + 1}/{max_retries + 1}). Retrying in {retry_delay}s...", file=sys.stderr)
+                last_exception = requests.exceptions.HTTPError(response=response) # Store exception
+                # Fall through to the retry delay/continue logic below the except block
+
+            # If code reaches here without returning/breaking, it implies a retryable condition based on status code
+            # or an unexpected successful status code without content handled above.
+
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            print(f"Warning: Network Error ({type(e).__name__}) for {url} (Attempt {attempt + 1}/{max_retries + 1}). Retrying in {retry_delay}s...", file=sys.stderr)
+            last_exception = e # Store exception
+            # Fall through to the retry delay/continue logic
+
+        except requests.exceptions.RequestException as e:
+            # Catch other potential request errors (less common, might not be retryable)
+            print(f"Error: Unexpected Request Exception {type(e).__name__} for {url} (Attempt {attempt + 1}/{max_retries + 1}): {e}", file=sys.stderr)
+            last_exception = e
+            # Decide if this specific error type should be retried. Let's assume not for now.
+            break # Break the loop, don't retry for unknown request exceptions
+
+        # --- Retry Logic ---
+        if attempt < max_retries:
+            time.sleep(retry_delay)
+            # Implement exponential backoff
+            retry_delay *= 2
         else:
-            # Return raw content if not JSON (e.g., getting snippet file content)
-            return response.text
-    except requests.exceptions.RequestException as e:
-        print(f"Error making {method} request to {url}: {e}", file=sys.stderr)
-        if hasattr(e, 'response') and e.response is not None:
-            try:
-                # Only print body for non-404 errors in this context or if needed
-                if not (response.status_code == 404 and "get_snippet_revision_content" in kwargs.get("caller_info", "")):
-                    print(f"Response body: {e.response.text}", file=sys.stderr)
-            except Exception:
-                print("Could not decode error response body.", file=sys.stderr)
-        return None
+            print(f"Error: Max retries ({max_retries}) reached for {url}.", file=sys.stderr)
+            # Optionally raise the last exception instead of returning None
+            # if last_exception:
+            #    raise last_exception
+            return None # Indicate final failure after retries
+
+
+    # If loop finishes without success (e.g., due to break on non-retryable error)
+    print(f"Error: Request failed for {url} after {attempt + 1} attempt(s). Last known error: {last_exception}", file=sys.stderr)
+    return None
 
 
 def get_paginated_results(url, headers):
